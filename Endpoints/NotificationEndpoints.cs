@@ -3,6 +3,7 @@ using DevelopmentTgBot.Configuration;
 using DevelopmentTgBot.Contracts;
 using DevelopmentTgBot.Notifications;
 using DevelopmentTgBot.Telegram;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 
 namespace DevelopmentTgBot.Endpoints;
@@ -45,15 +46,21 @@ public static class NotificationEndpoints
         return app;
     }
 
+    // Minimal API binds IFormFile from multipart/form-data automatically,
+    // but simple types (string, bool) default to query-string binding.
+    // [FromForm] forces them to be read from the form body, matching what
+    // the FamilyTree client (TelegramNotificationService.SendDocumentAsync)
+    // sends as `destination`, `caption`, etc. Without this, every call
+    // returned 400 because `destination` was always null.
     private static async Task<IResult> SendDocument(
         HttpContext context,
         IFormFile file,
         IOptionsMonitor<GatewayOptions> gatewayOptions,
         ITelegramSender telegramSender,
         ILoggerFactory loggerFactory,
-        string? destination = null,
-        string? caption = null,
-        bool? disableNotification = null,
+        [FromForm] string? destination = null,
+        [FromForm] string? caption = null,
+        [FromForm] bool? disableNotification = null,
         CancellationToken cancellationToken = default)
     {
         var logger = loggerFactory.CreateLogger("DocumentEndpoint");
