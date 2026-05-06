@@ -1,6 +1,9 @@
 using DevelopmentTgBot.Authentication;
+using DevelopmentTgBot.Configuration;
 using DevelopmentTgBot.Contracts;
 using DevelopmentTgBot.Notifications;
+using DevelopmentTgBot.Telegram;
+using Microsoft.Extensions.Options;
 
 namespace DevelopmentTgBot.Endpoints;
 
@@ -22,6 +25,16 @@ public static class NotificationEndpoints
              .WithName("SendNotification")
              .WithSummary("Queue a Telegram message for delivery to a named destination.");
 
+        // Documents skip the queue and are sent synchronously — buffering a
+        // 50MB backup in the in-memory queue would dwarf typical text-message
+        // memory use, and clients (DB-dump scripts, admin UI uploads) are
+        // happy to wait for the upload to finish.
+        group.MapPost("/document", SendDocument)
+             .RequireAuthorization()
+             .DisableAntiforgery()
+             .WithName("SendDocument")
+             .WithSummary("Upload a file to Telegram as a document. Synchronous; awaits Bot API response.");
+
         // Health endpoint left anonymous on purpose so liveness probes
         // don't need to ship an API key. Mounted at /healthz to mirror
         // the de-facto k8s convention.
@@ -30,6 +43,71 @@ public static class NotificationEndpoints
            .AllowAnonymous();
 
         return app;
+    }
+
+    private static async Task<IResult> SendDocument(
+        HttpContext context,
+        IFormFile file,
+        IOptionsMonitor<GatewayOptions> gatewayOptions,
+        ITelegramSender telegramSender,
+        ILoggerFactory loggerFactory,
+        string? destination = null,
+        string? caption = null,
+        bool? disableNotification = null,
+        CancellationToken cancellationToken = default)
+    {
+        var logger = loggerFactory.CreateLogger("DocumentEndpoint");
+
+        if (file is null || file.Length == 0)
+            return Results.BadRequest(new ErrorResponse("validation_failed", "File is required."));
+
+        if (string.IsNullOrWhiteSpace(destination))
+            return Results.BadRequest(new ErrorResponse("validation_failed", "'destination' is required."));
+
+        var gateway = gatewayOptions.CurrentValue;
+
+        if (!gateway.Destinations.TryGetValue(destination, out var resolved))
+            return Results.NotFound(new ErrorResponse(
+                "unknown_destination",
+                $"Destination '{destination}' is not configured."));
+
+        if (!DestinationAuthorizer.IsAllowed(context.User, destination))
+            return Results.Json(
+                new ErrorResponse("forbidden_destination",
+                    $"This API key is not allowed to write to '{destination}'."),
+                statusCode: StatusCodes.Status403Forbidden);
+
+        var clientName = context.User.FindFirst(ApiKeyClaimTypes.ClientName)?.Value ?? "(unnamed)";
+        logger.LogInformation(
+            "Forwarding document {FileName} ({Size} bytes) from {Client} to {Destination}.",
+            file.FileName, file.Length, clientName, destination);
+
+        try
+        {
+            // Stream the form-file body straight into TelegramSender — no
+            // intermediate copy. The IFormFile abstraction already buffers
+            // to disk for large uploads, so memory pressure stays bounded
+            // regardless of how big the dump gets.
+            await using var stream = file.OpenReadStream();
+            await telegramSender.SendDocumentAsync(
+                resolved,
+                stream,
+                file.FileName,
+                caption,
+                disableNotification,
+                cancellationToken);
+
+            return Results.Accepted(value: new { destination, fileName = file.FileName, sizeBytes = file.Length });
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex,
+                "Document upload to {Destination} failed for client {Client}.", destination, clientName);
+            return Results.Problem(
+                detail: ex.Message,
+                title: "Document upload failed.",
+                statusCode: StatusCodes.Status502BadGateway);
+        }
     }
 
     private static IResult SendNotification(

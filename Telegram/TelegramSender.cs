@@ -93,4 +93,67 @@ public sealed class TelegramSender : ITelegramSender
             response.EnsureSuccessStatusCode();
         }
     }
+
+    public async Task SendDocumentAsync(
+        DestinationOptions destination,
+        Stream content,
+        string fileName,
+        string? caption,
+        bool? disableNotification,
+        CancellationToken cancellationToken)
+    {
+        var current = _options.CurrentValue;
+
+        if (current.DryRun)
+        {
+            _logger.LogInformation(
+                "[DRY RUN] Would upload document {FileName} to chat {ChatId} (topic {TopicId}, caption {Caption}).",
+                fileName, destination.ChatId, destination.TopicId, caption ?? "(none)");
+            return;
+        }
+
+        var token = current.BotToken;
+        if (string.IsNullOrEmpty(token))
+            throw new InvalidOperationException(
+                "Telegram bot token is not configured. Set Telegram:BotToken via env vars or user secrets, " +
+                "or enable Telegram:DryRun for local testing.");
+
+        // multipart/form-data — Bot API requires this for file uploads.
+        // Each scalar field becomes its own StringContent so Telegram parses
+        // the form correctly; the binary file goes through StreamContent
+        // so we never buffer it into a byte[] in memory.
+        using var form = new MultipartFormDataContent
+        {
+            { new StringContent(destination.ChatId), "chat_id" }
+        };
+
+        if (destination.TopicId.HasValue)
+            form.Add(new StringContent(destination.TopicId.Value.ToString()), "message_thread_id");
+
+        if (!string.IsNullOrEmpty(caption))
+            form.Add(new StringContent(caption), "caption");
+
+        if (disableNotification == true)
+            form.Add(new StringContent("true"), "disable_notification");
+
+        var fileContent = new StreamContent(content);
+        fileContent.Headers.ContentType =
+            new System.Net.Http.Headers.MediaTypeHeaderValue("application/octet-stream");
+        // The third arg to Add is the field name expected by Bot API
+        // (`document`), the fourth is the file name surfaced in Telegram.
+        form.Add(fileContent, "document", fileName);
+
+        var url = $"/bot{token}/sendDocument";
+        using var response = await _http.PostAsync(url, form, cancellationToken);
+
+        if (!response.IsSuccessStatusCode)
+        {
+            var body = await response.Content.ReadAsStringAsync(cancellationToken);
+            _logger.LogWarning(
+                "Telegram sendDocument to chat {ChatId} (file {FileName}) failed: {StatusCode} {Body}",
+                destination.ChatId, fileName, (int)response.StatusCode, body);
+
+            response.EnsureSuccessStatusCode();
+        }
+    }
 }

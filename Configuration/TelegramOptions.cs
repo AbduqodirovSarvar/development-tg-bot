@@ -15,11 +15,13 @@ public sealed class TelegramOptions
     public string BaseUrl { get; set; } = "https://api.telegram.org";
 
     /// <summary>
-    /// Per-attempt timeout for the Bot API call. Telegram is usually fast;
-    /// long timeouts mostly hide upstream issues that we'd rather see and
-    /// retry on.
+    /// Per-attempt timeout for Bot API calls. Generous default because the
+    /// same HttpClient serves both text <c>sendMessage</c> (sub-second in
+    /// practice) and <c>sendDocument</c> uploads that can carry tens of
+    /// megabytes (DB backups). Override to a tighter value if you only
+    /// send text and want faster failure on transport hangs.
     /// </summary>
-    public TimeSpan RequestTimeout { get; set; } = TimeSpan.FromSeconds(10);
+    public TimeSpan RequestTimeout { get; set; } = TimeSpan.FromMinutes(2);
 
     /// <summary>
     /// When true, <see cref="Telegram.TelegramSender"/> logs the would-be
