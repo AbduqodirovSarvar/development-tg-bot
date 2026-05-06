@@ -43,3 +43,7 @@ C:\Sarvar-Apps\FT\development-tg-bot\obj\Debug\net9.0\refint\DevelopmentTgBot.dl
 C:\Sarvar-Apps\FT\development-tg-bot\obj\Debug\net9.0\DevelopmentTgBot.pdb
 C:\Sarvar-Apps\FT\development-tg-bot\obj\Debug\net9.0\development-tg-bot.genruntimeconfig.cache
 C:\Sarvar-Apps\FT\development-tg-bot\obj\Debug\net9.0\ref\DevelopmentTgBot.dll
+C:\Sarvar-Apps\FT\development-tg-bot\bin\Debug\net9.0\Swashbuckle.AspNetCore.Swagger.dll
+C:\Sarvar-Apps\FT\development-tg-bot\bin\Debug\net9.0\Swashbuckle.AspNetCore.SwaggerGen.dll
+C:\Sarvar-Apps\FT\development-tg-bot\bin\Debug\net9.0\Swashbuckle.AspNetCore.SwaggerUI.dll
+C:\Sarvar-Apps\FT\development-tg-bot\obj\Debug\net9.0\development-tg-bot.sourcelink.json

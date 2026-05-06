@@ -1,0 +1,49 @@
+services:
+  tg-bot:
+    image: ${DOCKER_USERNAME:-yourusername}/development-tg-bot:${IMAGE_TAG:-latest}
+    # `docker compose up --build` qilganda shu yerdan build qiladi.
+    # `docker compose pull && up -d` qilsa Docker Hub'dan tortib oladi (production).
+    build:
+      context: ./
+      dockerfile: Dockerfile
+    container_name: development-tg-bot
+    restart: unless-stopped
+    environment:
+      ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:-Production}
+
+      # ── Sirli qiymatlar — .env yoki host env'dan keladi ─────────
+      # .NET configurationda `Section__Subsection` `Section:Subsection` ga aylanadi.
+      Telegram__BotToken: ${TELEGRAM_BOT_TOKEN:?TELEGRAM_BOT_TOKEN kerak}
+      Telegram__DryRun: ${TELEGRAM_DRY_RUN:-false}
+
+      # API key indekslari appsettings.json dagi ApiClients massivi tartibiga
+      # mos kelishi shart. Hozirgi tartib:
+      #   [0] FamilyTree-prod  → familytree.dev.* + main.*
+      #   [1] FamilyTree-cicd  → familytree.dev.cicd
+      #   [2] FamilyTree-dbarxiv → familytree.dev.dbarxiv
+      # appsettings.json'dagi ApiClients tartibini o'zgartirsangiz, bu yerni ham
+      # yangilang — aks holda key noto'g'ri klientga yozib qo'yiladi.
+      Gateway__ApiClients__0__Key: ${API_KEY_FAMILYTREE:?API_KEY_FAMILYTREE kerak}
+      Gateway__ApiClients__1__Key: ${API_KEY_CICD:?API_KEY_CICD kerak}
+      Gateway__ApiClients__2__Key: ${API_KEY_DBARXIV:?API_KEY_DBARXIV kerak}
+    # Tashqi murojaatlar Caddy orqali HTTPS'da keladi
+    # (development-tg-bot.api.svlab.uz → development-tg-bot:8080).
+    # Bir xil server ichidagi servislar Docker DNS orqali to'g'ridan-to'g'ri
+    # `http://development-tg-bot:8080` ga murojaat qiladi.
+    # Host portga binding shuning uchun ham keraksiz, ham xavfli (Caddy/HTTPS
+    # bypassiga imkon beradi); local Postman testi `https://...svlab.uz`
+    # domeni orqali bemalol ishlaydi.
+    expose:
+      - "8080"
+    networks:
+      - global-net
+
+networks:
+  # Boshqa repolar (FamilyTree, ShopApp, ...) yaratgan tashqi network.
+  # Buni avval ishga tushiring:
+  #   cd ../database && docker compose up -d
+  # Va FamilyTree backend'i shu bot'ga `http://development-tg-bot:8080` orqali
+  # murojaat qila oladi (container_name = DNS).
+  global-net:
+    external: true
+    name: global-app-network

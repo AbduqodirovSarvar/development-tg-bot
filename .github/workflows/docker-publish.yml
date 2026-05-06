@@ -1,0 +1,119 @@
+name: CI/CD — Build, Push & Deploy
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Tag to publish (default: latest)"
+        required: false
+        default: latest
+
+concurrency:
+  group: ci-cd-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  IMAGE_NAME: development-tg-bot
+
+jobs:
+  # ─────────────────────────────────────────────────────────────
+  # 1) BUILD-CHECK — kompilyatsiya xatosi bo'lsa keyingi joblar
+  #    ishga tushmaydi. Test loyihasi hozircha yo'q, shuning uchun
+  #    `dotnet test` qadami chiqarib tashlangan; loyihaga test
+  #    qo'shilsa, shu yerga `dotnet test` qatorini qo'shing.
+  # ─────────────────────────────────────────────────────────────
+  build-check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "9.0.x"
+
+      - name: Restore dependencies
+        run: dotnet restore development-tg-bot.csproj
+
+      - name: Build project
+        run: dotnet build development-tg-bot.csproj --configuration Release --no-restore
+
+  # ─────────────────────────────────────────────────────────────
+  # 2) BUILD & PUSH — Docker image build qilib Docker Hub'ga push
+  # ─────────────────────────────────────────────────────────────
+  build-and-push:
+    needs: build-check
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+
+    outputs:
+      image_tag: ${{ steps.tag.outputs.value }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Resolve image tag
+        id: tag
+        run: |
+          if [ -n "${{ github.event.inputs.image_tag }}" ]; then
+            echo "value=${{ github.event.inputs.image_tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=latest" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build & push ${{ env.IMAGE_NAME }}
+        uses: docker/build-push-action@v6
+        with:
+          context: ./
+          file: ./Dockerfile
+          push: true
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ steps.tag.outputs.value }}
+            ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ─────────────────────────────────────────────────────────────
+  # 3) DEPLOY — server'ga SSH qilib pull va up -d ishga tushiradi
+  # ─────────────────────────────────────────────────────────────
+  deploy:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: SSH to server and deploy
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          port: ${{ secrets.SERVER_PORT || 22 }}
+          script: |
+            set -e
+            cd ~/svlab/development-tg-bot
+            echo "▶ Pulling latest code..."
+            git pull
+            echo "▶ Pulling latest image..."
+            docker compose pull
+            echo "▶ Restarting containers..."
+            docker compose up -d
+            echo "▶ Cleaning up dangling images..."
+            docker image prune -f
+            echo "▶ Container status:"
+            docker compose ps
