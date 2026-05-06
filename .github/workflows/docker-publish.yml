@@ -117,3 +117,84 @@ jobs:
             docker image prune -f
             echo "▶ Container status:"
             docker compose ps
+
+  # ─────────────────────────────────────────────────────────────
+  # 4) NOTIFY — har bir bosqich natijasini Telegram'ga yuborish.
+  #    `if: always()` shu jobni avvalgi joblar muvaffaqiyatli yoki
+  #    yiqilgan/cancelled/skipped bo'lganida ham ishga tushiradi.
+  #    Notification post'ining o'zi xato bersa, workflow yashil
+  #    qoladi (notification observability, deploy emas).
+  # ─────────────────────────────────────────────────────────────
+  notify:
+    needs: [build-check, build-and-push, deploy]
+    runs-on: ubuntu-latest
+    if: always()
+
+    steps:
+      - name: Send CI/CD status to Telegram gateway
+        env:
+          GATEWAY_URL: ${{ secrets.NOTIFICATION_GATEWAY_URL }}
+          API_KEY: ${{ secrets.NOTIFICATION_API_KEY_CICD }}
+          PROJECT: development-tg-bot
+          BRANCH: ${{ github.ref_name }}
+          COMMIT: ${{ github.sha }}
+          AUTHOR: ${{ github.actor }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          BUILD_CHECK_RESULT: ${{ needs.build-check.result }}
+          BUILD_PUSH_RESULT: ${{ needs.build-and-push.result }}
+          DEPLOY_RESULT: ${{ needs.deploy.result }}
+        run: |
+          set -uo pipefail
+
+          if [ -z "$GATEWAY_URL" ] || [ -z "$API_KEY" ]; then
+            echo "Gateway secrets not set; skipping notification."
+            exit 0
+          fi
+
+          icon() {
+            case "$1" in
+              success)   echo "✅";;
+              failure)   echo "❌";;
+              cancelled) echo "⏹️";;
+              skipped)   echo "⏭️";;
+              *)         echo "❔";;
+            esac
+          }
+
+          # Failure dominates; cancelled second. All-success only if every
+          # job ended in `success` — anything else is "PARTIAL" so the
+          # message clearly distinguishes a clean run from one with skips.
+          if   [[ "$BUILD_CHECK_RESULT" == "failure" || "$BUILD_PUSH_RESULT" == "failure" || "$DEPLOY_RESULT" == "failure" ]]; then
+            OVERALL="❌ FAILED"
+          elif [[ "$BUILD_CHECK_RESULT" == "cancelled" || "$BUILD_PUSH_RESULT" == "cancelled" || "$DEPLOY_RESULT" == "cancelled" ]]; then
+            OVERALL="⏹️ CANCELLED"
+          elif [[ "$BUILD_CHECK_RESULT" == "success" && "$BUILD_PUSH_RESULT" == "success" && "$DEPLOY_RESULT" == "success" ]]; then
+            OVERALL="✅ SUCCESS"
+          else
+            OVERALL="⚠️ PARTIAL"
+          fi
+
+          # Short SHA for readability — full SHA stays in the run URL below.
+          SHORT_COMMIT="${COMMIT:0:7}"
+
+          TEXT="$OVERALL — $PROJECT
+          branch: $BRANCH
+          commit: $SHORT_COMMIT
+          author: $AUTHOR
+
+          build-check: $(icon "$BUILD_CHECK_RESULT")  $BUILD_CHECK_RESULT
+          build/push:  $(icon "$BUILD_PUSH_RESULT")  $BUILD_PUSH_RESULT
+          deploy:      $(icon "$DEPLOY_RESULT")  $DEPLOY_RESULT
+
+          https://github.com/$REPO/actions/runs/$RUN_ID"
+
+          # jq escapes newlines/quotes safely so we never send malformed JSON.
+          PAYLOAD=$(jq -n --arg text "$TEXT" '{destination: "familytree.dev.cicd", text: $text}')
+
+          # Notification failure must not break the workflow — `|| true`
+          # keeps the job green even if the gateway is unreachable.
+          curl -sSf -X POST "$GATEWAY_URL/api/notify" \
+            -H "Authorization: Bearer $API_KEY" \
+            -H "Content-Type: application/json" \
+            --data "$PAYLOAD" || echo "Notification post failed (non-fatal)."
