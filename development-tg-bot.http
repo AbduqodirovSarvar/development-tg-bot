@@ -1,0 +1,76 @@
+@host = http://localhost:5201
+@apiKey = postman-dev-key
+
+### Health probe (anonymous)
+GET {{host}}/healthz
+
+### Send to dev group "bugs" topic
+POST {{host}}/api/notify
+Authorization: Bearer {{apiKey}}
+Content-Type: application/json
+
+{
+  "destination": "familytree.dev.bugs",
+  "text": "NullReferenceException at AccountService:42"
+}
+
+### Send to dev group "general" (no TopicId on destination)
+POST {{host}}/api/notify
+Authorization: Bearer {{apiKey}}
+Content-Type: application/json
+
+{
+  "destination": "familytree.dev.general",
+  "text": "Manual ping from Postman"
+}
+
+### Send to main group (X-Api-Key header form)
+POST {{host}}/api/notify
+X-Api-Key: {{apiKey}}
+Content-Type: application/json
+
+{
+  "destination": "main.group",
+  "text": "Salom asosiy gruppa"
+}
+
+### Send to main channel with HTML
+POST {{host}}/api/notify
+Authorization: Bearer {{apiKey}}
+Content-Type: application/json
+
+{
+  "destination": "main.channel",
+  "text": "<b>Yangi versiya</b> chiqdi.",
+  "parseMode": "HTML",
+  "disableNotification": true
+}
+
+### Unknown destination -> 404
+POST {{host}}/api/notify
+Authorization: Bearer {{apiKey}}
+Content-Type: application/json
+
+{
+  "destination": "does.not.exist",
+  "text": "should fail"
+}
+
+### Missing API key -> 401
+POST {{host}}/api/notify
+Content-Type: application/json
+
+{
+  "destination": "familytree.dev.bugs",
+  "text": "should be rejected"
+}
+
+### Wrong API key -> 401
+POST {{host}}/api/notify
+Authorization: Bearer wrong-key
+Content-Type: application/json
+
+{
+  "destination": "familytree.dev.bugs",
+  "text": "should be rejected"
+}
